@@ -7,14 +7,13 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+    cors: { origin: "*" } // Дозволяємо підключення звідусіль
+});
 
-// --- ВАЖЛИВО: СТВОРЮЄМО ПАПКИ ЯКЩО ЇХ НЕМАЄ ---
-const publicDir = path.join(__dirname, 'public');
-const uploadDir = path.join(publicDir, 'uploads');
-
-if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir);
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+// На Render не можна зберігати файли надовго (вони зникнуть після перезапуску),
+// але для тесту це ок.
+const uploadDir = '/tmp'; // Використовуємо тимчасову папку
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
@@ -25,16 +24,15 @@ const upload = multer({ storage: storage });
 let usersDB = {}; 
 let voiceUsers = {}; 
 
-// 1. Спочатку пробуємо знайти файли в папці public
-app.use(express.static(publicDir));
+app.use(express.static("public"));
 
-// 2. ЯКЩО НЕ ЗНАЙШЛО -> ПРИМУСОВО ВІДДАЄМО INDEX.HTML
-app.get("/", (req, res) => {
-    const indexPath = path.join(publicDir, 'index.html');
-    if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
+// Маршрут для аватарок (читаємо з /tmp)
+app.get('/uploads/:filename', (req, res) => {
+    const filepath = path.join(uploadDir, req.params.filename);
+    if (fs.existsSync(filepath)) {
+        res.sendFile(filepath);
     } else {
-        res.send("<h1>Помилка!</h1><p>Файл <b>index.html</b> не знайдено в папці <b>public</b>.</p>");
+        res.redirect('https://cdn-icons-png.flaticon.com/512/847/847969.png');
     }
 });
 
@@ -85,16 +83,19 @@ io.on("connection", (socket) => {
     socket.on("disconnect", handleLeave);
     socket.on("leave-voice", handleLeave);
   });
-  
+
   socket.on("disconnect", () => {
       if (voiceUsers[socket.id]) {
           delete voiceUsers[socket.id];
           io.emit("voice-list-update", voiceUsers);
       }
   });
+  
   socket.on("admin-mute-user", (id) => io.to(id).emit("you-are-muted"));
 });
 
-server.listen(3000, () => {
-  console.log("Server is running!");
+// Render сам видає порт через process.env.PORT
+const port = process.env.PORT || 3000;
+server.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });
