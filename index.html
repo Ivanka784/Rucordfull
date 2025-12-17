@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RUcord: Oleg Edition</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <style>
+        :root { --bg-dark: #202225; --bg-channels: #2f3136; --bg-chat: #36393f; --text: #dcddde; --green: #43b581; --red: #f04747; }
+        body { margin: 0; font-family: sans-serif; background: var(--bg-chat); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+        #app { display: none; width: 100%; height: 100%; position: relative; }
+        .sidebar { width: 240px; background: var(--bg-channels); display: flex; flex-direction: column; padding: 10px; flex-shrink: 0; transition: transform 0.3s ease; z-index: 100; }
+        .chat { flex-grow: 1; display: flex; flex-direction: column; background: var(--bg-chat); width: 100%; }
+        .menu-btn { display: none; background: none; border: none; color: white; font-size: 24px; cursor: pointer; padding: 10px 15px; }
+        .header { display: flex; align-items: center; border-bottom: 1px solid #222; background: #36393f; height: 50px; }
+        
+        /* Mobilka.oleg */
+        @media (max-width: 768px) {
+            .sidebar { position: absolute; top: 0; left: 0; height: 100%; width: 280px; transform: translateX(-100%); box-shadow: 2px 0 10px rgba(0,0,0,0.5); }
+            .sidebar.open { transform: translateX(0); }
+            .menu-btn { display: block; }
+            .overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.5); z-index: 90; }
+            .overlay.active { display: block; }
+        }
+
+        .channel { padding: 12px; cursor: pointer; border-radius: 4px; color: #8e9297; margin-bottom: 5px; font-size: 16px; }
+        .channel:hover { background: #34373c; color: white; }
+        .voice-active { color: var(--green); font-weight: bold; border: 1px solid var(--green); }
+        .controls { margin-top: auto; background: #292b2f; padding: 15px; border-radius: 5px; display: flex; justify-content: space-around; }
+        .btn-icon { background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text); }
+        .btn-icon.off { color: var(--red); }
+        .messages { flex-grow: 1; padding: 15px; overflow-y: auto; }
+        .input-area { padding: 10px; display: flex; background: #40444b; margin: 10px; border-radius: 20px; }
+        input { flex-grow: 1; padding: 10px; border: none; background: transparent; color: white; font-size: 16px; outline: none; }
+        
+        #login { position: fixed; top:0; left:0; width:100%; height:100%; background: var(--bg-dark); display: flex; justify-content: center; align-items: center; z-index: 999; }
+        .login-box { background: var(--bg-channels); padding: 30px; border-radius: 10px; text-align: center; width: 80%; max-width: 300px; }
+        .user-entry { padding: 10px; border-bottom: 1px solid #444; font-size: 14px; }
+    </style>
+</head>
+<body>
+
+    <div id="login">
+        <div class="login-box">
+            <h2>RUcord</h2>
+            <input id="username" placeholder="Im'ya Olega..." style="padding: 10px; margin-bottom: 10px; width: 90%;">
+            <br>
+            <button onclick="startApp()" style="padding: 10px 20px;">GO</button>
+        </div>
+    </div>
+
+    <div id="app">
+        <div class="overlay" onclick="toggleMenu()"></div>
+
+        <div class="sidebar" id="sidebar">
+            <h3 style="margin: 10px 0;">Oleg Server</h3>
+            <div class="channel" onclick="toggleMenu()"># 💬 flood</div>
+            <br>
+            <div class="channel voice" id="voice-channel-btn" onclick="joinVoiceChannel()">
+                🔊 Golos
+            </div>
+            
+            <div id="voice-users-list" style="margin-top: 15px; overflow-y: auto;"></div>
+            
+            <div class="controls">
+                <button class="btn-icon" id="mic-btn" onclick="toggleMic()">🎤</button>
+                <button class="btn-icon" onclick="leaveVoice()" style="color: #f04747;">📞</button>
+            </div>
+        </div>
+
+        <div class="chat">
+            <div class="header">
+                <button class="menu-btn" onclick="toggleMenu()">☰</button>
+                <span style="font-weight: bold; margin-left: 10px;"># flood</span>
+            </div>
+            <div class="messages" id="msgs"></div>
+            <div class="input-area">
+                <input id="msg-in" placeholder="Pyshy syuda...">
+                <button onclick="sendMsg()" style="background:none; border:none; color:white;">➤</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Mozky.oleg
+        const socket = io();
+        let myPeer, myStream, peers = {}, currentUser = "";
+        let isAdmin = false, isForceMuted = false;
+
+        function toggleMenu() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.querySelector('.overlay').classList.toggle('active');
+        }
+
+        // Vhid.oleg
+        function startApp() {
+            currentUser = document.getElementById('username').value;
+            if(!currentUser) return alert("Im'ya de?");
+            
+            if(currentUser === "Ivanka" || currentUser === "Макс") {
+                isAdmin = true;
+                alert("Pryvit nachalnyk (Admin mode ON)");
+            }
+
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('app').style.display = 'flex';
+        }
+
+        // Pisala.oleg
+        const msgIn = document.getElementById('msg-in');
+        msgIn.addEventListener('keypress', e => { if(e.key === 'Enter') sendMsg(); });
+
+        function sendMsg() {
+            if(!msgIn.value) return;
+            socket.emit('chat message', { user: currentUser, text: msgIn.value });
+            msgIn.value = '';
+        }
+
+        socket.on('chat message', msg => {
+            const div = document.createElement('div');
+            div.style.marginBottom = "10px";
+            div.innerHTML = `<strong style="color: ${msg.user === 'Ivanka' ? '#e91e63' : '#43b581'}">${msg.user}:</strong> ${msg.text}`;
+            const container = document.getElementById('msgs');
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        });
+
+        // Golos.oleg
+        function joinVoiceChannel() {
+            document.getElementById('voice-channel-btn').classList.add('voice-active');
+            
+            if(window.innerWidth < 768) toggleMenu();
+
+            myPeer = new Peer(undefined, { host: '0.peerjs.com', port: 443, secure: true });
+
+            navigator.mediaDevices.getUserMedia({ video: false, audio: true }).then(stream => {
+                myStream = stream;
+                myPeer.on('call', call => {
+                    call.answer(stream);
+                    const audio = document.createElement('audio');
+                    call.on('stream', st => addAudioStream(audio, st));
+                });
+                myPeer.on('open', id => socket.emit('join-voice', 'voice-room', id));
+                socket.on('user-connected', d => {
+                    connectToNewUser(d.peerId, stream);
+                    addUserToUI(d.socketId);
+                });
+            }).catch(err => alert("Mikrofon.oleg polamavsya"));
+        }
+
+        function connectToNewUser(userId, stream) {
+            const call = myPeer.call(userId, stream);
+            const audio = document.createElement('audio');
+            call.on('stream', st => addAudioStream(audio, st));
+            peers[userId] = call;
+        }
+
+        function addAudioStream(audio, stream) {
+            audio.srcObject = stream;
+            audio.addEventListener('loadedmetadata', () => audio.play());
+            document.body.append(audio);
+        }
+
+        // Admin.oleg
+        function addUserToUI(targetSocketId) {
+            const list = document.getElementById('voice-users-list');
+            const userDiv = document.createElement('div');
+            userDiv.className = "user-entry";
+            userDiv.innerText = "👤 Chelik.. " + targetSocketId.substr(0,3);
+            
+            if(isAdmin) {
+                userDiv.style.color = "#faa61a";
+                userDiv.style.cursor = "pointer";
+                userDiv.onclick = function() {
+                    if(confirm("Zatknuty yogo?")) {
+                        socket.emit('admin-mute-user', targetSocketId);
+                        userDiv.style.color = "red";
+                        userDiv.innerText += " (MUTED)";
+                    }
+                };
+            }
+            list.appendChild(userDiv);
+        }
+
+        // Jertva.oleg
+        socket.on('you-are-muted', () => {
+            alert("Tebe zamyutyly!");
+            isForceMuted = true;
+            if(myStream) myStream.getAudioTracks()[0].enabled = false;
+            document.getElementById('mic-btn').innerText = "🔇";
+            document.getElementById('mic-btn').classList.add('off');
+        });
+
+        function toggleMic() {
+            if(isForceMuted) return alert("Ne mozhna, ban!");
+            if(!myStream) return;
+            const track = myStream.getAudioTracks()[0];
+            track.enabled = !track.enabled;
+            const btn = document.getElementById('mic-btn');
+            btn.innerText = track.enabled ? "🎤" : "🔇";
+            btn.classList.toggle('off', !track.enabled);
+        }
+        
+        function leaveVoice() { location.reload(); }
+    </script>
+</body>
+</html>
