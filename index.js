@@ -7,54 +7,102 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin: "*" } // Дозволяємо підключення звідусіль
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
-// На Render не можна зберігати файли надовго (вони зникнуть після перезапуску),
-// але для тесту це ок.
-const uploadDir = '/tmp'; // Використовуємо тимчасову папку
+// --- СТВОРЕННЯ ПАПОК І ФАЙЛІВ ---
+const publicDir = path.join(__dirname, 'public');
+const uploadDir = path.join(publicDir, 'uploads');
+const USERS_FILE = './users.json';
 
+if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir);
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+// Створюємо файл бази даних, якщо його немає
+if (!fs.existsSync(USERS_FILE)) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify({}));
+}
+
+// --- НАЛАШТУВАННЯ ЗАВАНТАЖЕННЯ ---
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const upload = multer({ storage: storage });
 
-let usersDB = {}; 
-let voiceUsers = {}; 
+app.use(express.static(publicDir));
 
-app.use(express.static("public"));
-
-// Маршрут для аватарок (читаємо з /tmp)
-app.get('/uploads/:filename', (req, res) => {
-    const filepath = path.join(uploadDir, req.params.filename);
-    if (fs.existsSync(filepath)) {
-        res.sendFile(filepath);
-    } else {
-        res.redirect('https://cdn-icons-png.flaticon.com/512/847/847969.png');
+// --- ФУНКЦІЇ ДЛЯ РОБОТИ З ФАЙЛОМ ЮЗЕРІВ ---
+function getUsers() {
+    try {
+        const data = fs.readFileSync(USERS_FILE);
+        return JSON.parse(data);
+    } catch (e) {
+        return {};
     }
+}
+
+function saveUser(username, userData) {
+    const users = getUsers();
+    users[username] = userData;
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
+// --- МАРШРУТИ ---
+
+// Головна сторінка
+app.get("/", (req, res) => {
+    const indexPath = path.join(publicDir, 'index.html');
+    if (fs.existsSync(indexPath)) res.sendFile(indexPath);
+    else res.send("Створіть файл index.html у папці public!");
 });
 
+// Реєстрація
 app.post('/register', upload.single('avatar'), (req, res) => {
     const { username, password } = req.body;
-    if (usersDB[username]) return res.json({ success: false, msg: "Юзер існує" });
+    
+    // Очищаємо пробіли
+    const cleanUser = username.trim();
+    const cleanPass = password.trim();
+
+    const users = getUsers();
+    if (users[cleanUser]) {
+        return res.json({ success: false, msg: "Користувач вже існує!" });
+    }
+
     const avatarPath = req.file ? `/uploads/${req.file.filename}` : 'https://cdn-icons-png.flaticon.com/512/847/847969.png';
-    usersDB[username] = { password, avatar: avatarPath };
-    res.json({ success: true, msg: "OK" });
+    
+    saveUser(cleanUser, { password: cleanPass, avatar: avatarPath });
+    console.log(`[REGISTER] Новий юзер: ${cleanUser}`);
+    
+    res.json({ success: true, msg: "Успішно! Тепер увійдіть." });
 });
+
+let voiceUsers = {}; 
 
 io.on("connection", (socket) => {
   socket.emit("voice-list-update", voiceUsers);
 
+  // --- ЛОГІКА ВХОДУ (LOGIN) ---
   socket.on("login", (data) => {
-      const user = usersDB[data.username];
-      if (!user || user.password !== data.password) {
-          socket.emit("auth-fail", "Помилка входу");
+      const cleanUser = data.username.trim();
+      const cleanPass = data.password.trim();
+
+      console.log(`[LOGIN TRY] Спроба входу: ${cleanUser}`);
+
+      const users = getUsers(); // Читаємо з файлу
+      const user = users[cleanUser];
+
+      if (!user) {
+          console.log(`[LOGIN FAIL] Юзера ${cleanUser} не знайдено.`);
+          socket.emit("auth-fail", "Такого користувача не існує.");
+      } else if (user.password !== cleanPass) {
+          console.log(`[LOGIN FAIL] Невірний пароль для ${cleanUser}.`);
+          socket.emit("auth-fail", "Невірний пароль.");
       } else {
-          socket.username = data.username;
+          console.log(`[LOGIN SUCCESS] ${cleanUser} увійшов!`);
+          socket.username = cleanUser;
           socket.avatar = user.avatar;
-          socket.emit("auth-success", { username: data.username, avatar: user.avatar });
+          socket.emit("auth-success", { username: cleanUser, avatar: user.avatar });
       }
   });
 
@@ -83,19 +131,16 @@ io.on("connection", (socket) => {
     socket.on("disconnect", handleLeave);
     socket.on("leave-voice", handleLeave);
   });
-
+  
   socket.on("disconnect", () => {
       if (voiceUsers[socket.id]) {
           delete voiceUsers[socket.id];
           io.emit("voice-list-update", voiceUsers);
       }
   });
-  
   socket.on("admin-mute-user", (id) => io.to(id).emit("you-are-muted"));
 });
 
-// Render сам видає порт через process.env.PORT
-const port = process.env.PORT || 3000;
-server.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+server.listen(3000, () => {
+  console.log("Server is running on port 3000");
 });
