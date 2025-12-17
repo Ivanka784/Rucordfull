@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RUcord on Render</title>
+    <title>RUcord Stable</title>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
@@ -22,9 +22,16 @@
         .messages { flex-grow: 1; padding: 15px; overflow-y: auto; }
         .input-area { padding: 15px; background: #40444b; display: flex; align-items: center; }
         input { flex-grow: 1; padding: 10px; border: none; background: transparent; color: white; outline: none; }
+        
+        /* LOGIN STYLES */
         #login { position: fixed; top:0; left:0; width:100%; height:100%; background: var(--bg-dark); display: flex; justify-content: center; align-items: center; z-index: 999; }
         .login-box { background: var(--bg-channels); padding: 30px; border-radius: 8px; width: 300px; text-align: center; }
         .login-input { padding: 10px; margin-bottom: 10px; width: 90%; background: #202225; color: white; border: 1px solid #333; border-radius: 4px; }
+        .btn-group { display: flex; justify-content: space-between; margin-top: 10px; }
+        button { padding: 10px; border-radius: 4px; cursor: pointer; border: none; font-weight: bold; color: white; width: 48%; }
+        .btn-reg { background: #4f545c; }
+        .btn-log { background: var(--blue); }
+
         .controls { margin-top: auto; background: #292b2f; padding: 10px; display: flex; justify-content: space-around; }
         .btn-icon { background: none; font-size: 20px; width: auto; cursor: pointer; border: none; color: white;}
         .voice-connecting { color: var(--yellow); pointer-events: none; }
@@ -38,13 +45,21 @@
     <div id="login">
         <div class="login-box">
             <h2>RUcord Login</h2>
+            <div id="auth-error" style="color: var(--red); font-size: 14px; margin-bottom: 10px; display: none;"></div>
+            
             <input id="username" class="login-input" placeholder="Логін">
             <input id="password" class="login-input" type="password" placeholder="Пароль">
+            
+            <label style="color: grey; font-size: 12px;">Аватар (для реєстрації):</label>
             <input id="avatar-file" type="file" accept="image/*" style="color: white; margin-bottom: 10px;">
-            <button onclick="doRegister()" style="padding:10px;">Реєстрація</button>
-            <button onclick="doLogin()" style="background:var(--blue); color:white; padding:10px; border:none;">Вхід</button>
+            
+            <div class="btn-group">
+                <button class="btn-reg" onclick="doRegister()">Реєстрація</button>
+                <button class="btn-log" onclick="doLogin()">Вхід</button>
+            </div>
         </div>
     </div>
+
     <div id="app">
         <div class="sidebar">
             <h3>RUcord Server</h3>
@@ -96,20 +111,48 @@
             });
         });
 
-        async function doRegister() {
-            const form = new FormData();
-            form.append('username', document.getElementById('username').value);
-            form.append('password', document.getElementById('password').value);
-            form.append('avatar', document.getElementById('avatar-file').files[0]);
-            const res = await fetch('/register', { method: 'POST', body: form });
-            const result = await res.json();
-            alert(result.msg);
+        // --- AUTH LOGIC FIXED ---
+        function showError(msg) {
+            const err = document.getElementById('auth-error');
+            err.innerText = msg;
+            err.style.display = 'block';
         }
+
+        async function doRegister() {
+            const u = document.getElementById('username').value.trim();
+            const p = document.getElementById('password').value.trim();
+            
+            if(!u || !p) return showError("Введіть логін і пароль!");
+
+            const form = new FormData();
+            form.append('username', u);
+            form.append('password', p);
+            form.append('avatar', document.getElementById('avatar-file').files[0]);
+            
+            try {
+                const res = await fetch('/register', { method: 'POST', body: form });
+                const result = await res.json();
+                
+                if (result.success) {
+                    alert(result.msg);
+                    showError(""); // Очистити помилки
+                } else {
+                    showError(result.msg);
+                }
+            } catch (e) {
+                showError("Помилка сервера");
+            }
+        }
+
         function doLogin() {
-            const u = document.getElementById('username').value;
-            const p = document.getElementById('password').value;
+            const u = document.getElementById('username').value.trim();
+            const p = document.getElementById('password').value.trim();
+            
+            if(!u || !p) return showError("Введіть логін і пароль!");
+            
             socket.emit('login', { username: u, password: p });
         }
+
         socket.on('auth-success', (data) => {
             currentUser = data.username;
             currentAvatar = data.avatar;
@@ -117,6 +160,12 @@
             document.getElementById('login').style.display = 'none';
             document.getElementById('app').style.display = 'flex';
         });
+
+        socket.on('auth-fail', (msg) => {
+            showError(msg);
+        });
+
+        // CHAT & MEDIA
         const msgIn = document.getElementById('msg-in');
         msgIn.addEventListener('keypress', e => { if(e.key === 'Enter') sendMsg(); });
         function sendMsg() {
@@ -141,7 +190,6 @@
             status.innerText = "Підключення до хмари...";
             document.querySelector('.main-content').classList.add('video-active');
 
-            // --- CLOUD PEERJS ---
             myPeer = new Peer(undefined, {
                 debug: 2,
                 config: {
@@ -155,7 +203,7 @@
             myPeer.on('error', (err) => {
                 console.error(err);
                 btn.className = ''; 
-                btn.classList.add('voice-error'); // Стиль помилки
+                btn.classList.add('voice-error'); 
                 btn.innerHTML = '🔊 Помилка!';
                 status.innerText = "Err: " + err.type;
                 inVoiceCall = false;
